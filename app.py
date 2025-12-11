@@ -1,11 +1,8 @@
 import streamlit as st
 import os
-import tempfile
 import time
 from typing import Tuple, Optional
 import requests
-import json
-import base64
 from urllib.parse import urljoin # Utility for constructing API URLs
 
 # --- Configuration and Client Initialization ---
@@ -18,113 +15,98 @@ except KeyError:
     st.stop()
 
 # --- ApyHub API Configuration ---
-# Base URL for ApyHub APIs (This is an assumed endpoint, check ApyHub's official documentation)
 APYHUB_BASE_URL = "https://api.apyhub.com/"
-# Endpoint for Speech-to-Text conversion (Assumed endpoint)
-STT_ENDPOINT = urljoin(APYHUB_BASE_URL, "ai/convert/speech-to-text")
-# Model/Provider to use (ApyHub might allow specifying an underlying provider)
-MODEL_NAME = "apyhub-stt-standard" 
+
+# ✅ FIX APPLIED: Corrected endpoint based on ApyHub documentation for STT file upload
+STT_ENDPOINT = urljoin(APYHUB_BASE_URL, "stt/file") 
+
+# This is a mandatory parameter for the ApyHub STT API.
+# You must specify the language code of the speech (e.g., 'en-US', 'my-MM').
+DEFAULT_LANGUAGE_CODE = "en-US" 
+MODEL_NAME = "ApyHub STT (multipart/form-data)" 
 
 # --- Utility Function: Core Logic ---
 
-def analyze_media_with_apyhub(uploaded_file, mime_type: str) -> Tuple[Optional[str], str]:
+def analyze_media_with_apyhub(uploaded_file, mime_type: str, language_code: str) -> Tuple[Optional[str], str]:
     """
-    1. Reads the audio/video file's content and converts it to Base64 (A common API pattern).
-    2. Sends the Base64 data to the ApyHub Speech-to-Text API.
-    3. Sends the resulting transcript (or the file directly) to a Generative Model (Hypothetical ApyHub Text Generator)
-       for summarization, OR structures the final output based on the transcript result.
-       
+    1. Reads the file content and prepares it for a multipart/form-data request.
+    2. Sends the file and language code to the ApyHub /stt/file API.
+    3. Structures the final output based on the transcript result.
+    
     Returns: (analysis_result_text, detected_language_code)
     """
     
     st.info(f"Step 1/2: Preparing file **{uploaded_file.name}** for ApyHub...")
     
-    # 1. Read file and convert to Base64
+    # 1. Prepare data for multipart/form-data
     uploaded_file.seek(0)
-    file_bytes = uploaded_file.read()
-    base64_content = base64.b64encode(file_bytes).decode('utf-8')
     
-    # Check if the file is too large for a Base64-in-body approach (API limits may vary)
-    if len(base64_content) > (20 * 1024 * 1024): # Example: limiting to 20MB of Base64 content (approx 15MB file)
-        st.warning("Warning: File is large. ApyHub API may require a different upload method (e.g., pre-signed URL) for files this size.")
-        
-    
-    # ApyHub STT Request Payload
-    payload = {
-        "input": {
-            "type": "file",
-            "file": base64_content,
-            "filename": uploaded_file.name,
-            "mimetype": mime_type
-        },
-        # Assuming ApyHub allows specifying output format or language hints
-        "output": {
-            "type": "text"
-        }
+    # This structure tells 'requests' to create the multipart/form-data body.
+    # The 'file' field holds the audio file data.
+    files = {
+        'file': (uploaded_file.name, uploaded_file.read(), mime_type)
     }
     
+    # The 'language' field is a simple form field, not a file.
+    data = {
+        'language': language_code
+    }
+    
+    # The Authorization token is passed via a header.
     headers = {
-        "Authorization": f"Token {API_KEY}",
-        "Content-Type": "application/json"
+        "apy-token": API_KEY, # ApyHub uses 'apy-token' for the header
     }
 
     transcript_text = None
     
     try:
         # 2. Call ApyHub for Speech-to-Text
-        st.info(f"Step 2a/2: Calling ApyHub STT API at {STT_ENDPOINT}...")
+        st.info(f"Step 2/2: Calling ApyHub STT API at **{STT_ENDPOINT}** with language code: `{language_code}`...")
         start_time = time.time()
         
+        # ✅ FIX APPLIED: Use 'files' parameter for multipart/form-data and 'data' for form fields
         response = requests.post(
             STT_ENDPOINT, 
             headers=headers, 
-            data=json.dumps(payload), 
+            data=data,
+            files=files,
             timeout=300 # 5 minutes timeout for long transcriptions
         )
         
         response.raise_for_status() # Raises an HTTPError for bad responses (4xx or 5xx)
         
-        # Assume successful response returns a JSON with the transcript
+        # ApyHub successful response returns JSON: {"data": "This is the sample data from speech-to-text"}
         transcript_data = response.json()
-        transcript_text = transcript_data.get("data", {}).get("text", transcript_data.get("data"))
+        transcript_text = transcript_data.get("data")
 
         if not transcript_text:
             st.error(f"ApyHub returned success but no transcript data. Full response: {transcript_data}")
             return "Analysis failed: No transcript received.", ""
         
-        st.success(f"Transcription completed in {time.time() - start_time:.2f} seconds.")
+        end_time = time.time()
+        st.success(f"Transcription completed in {end_time - start_time:.2f} seconds.")
 
-        # --- Summarization Logic (Option A: If ApyHub has a separate summarization endpoint) ---
-        # For simplicity and to match the original Gemini logic, we'll implement Option B
-        
-        # --- Summarization Logic (Option B: Simple Structure) ---
-        # This part simulates the summarization without a second API call,
-        # since ApyHub's public docs don't show a combined STT+Summary endpoint.
-        # A real application would require a second 'Text Summarization' API call.
-        
+        # --- Summarization Logic (Not part of the ApyHub STT API, so we keep the placeholder) ---
         final_result = (
             f"## 📝 Full Transcript (via ApyHub)\n"
             f"{transcript_text}\n\n"
             f"## ✅ Key Point Summary (5 Points)\n"
-            f"* **NOTE:** The summarization part requires a separate ApyHub AI call "
-            f"(e.g., using a Text Summarization API) which is not implemented here. \n"
-            f"* Please copy the transcript above and submit it to a text summarization tool."
+            f"* **NOTE:** Summarization requires a **separate** AI call (e.g., ApyHub Text Summarization) \n"
+            f"* You can copy the transcript above and submit it to a text summarization tool."
         )
 
-        return final_result, "Unknown"
+        return final_result, language_code
             
     except requests.exceptions.HTTPError as e: 
         st.error(f"ApyHub API Call Failed (HTTP Error): {e}. Response: {response.text}")
-        return "Analysis failed due to API connection error.", ""
+        st.error("Common ApyHub errors: 401 (Invalid Token), 400 (Missing 'language' parameter or invalid file).")
+        return "Analysis failed due to API connection error. Check your API key and mandatory parameters.", ""
     except requests.exceptions.RequestException as e:
         st.error(f"Network/Timeout Error: {e}")
         return "Analysis failed due to network or timeout error.", ""
     except Exception as e:
         st.error(f"An unexpected error occurred: {e}")
         return "Analysis failed due to an unexpected error.", ""
-    finally:
-        # No remote file cleanup needed as Base64 is sent in the request body.
-        pass
 
 
 # --- Streamlit UI ---
@@ -157,8 +139,8 @@ st.markdown("""
 
 
 st.markdown(f'<h1 class="main-header">🎙️Video/Audio Summarizer (via ApyHub)</h1>', unsafe_allow_html=True)
-st.info(f"⚡System uses the **ApyHub Convert Speech-to-Text API**.")
-st.write("Upload **any** video or audio file (e.g., MP3, MP4, WAV). Note: APIs using Base64 in the request body often have size limitations.")
+st.info(f"⚡System uses the **{MODEL_NAME}**.")
+st.write("Upload **any** video or audio file. You **must** select the language of the speech below, as required by the ApyHub API.")
 
 # File Uploader
 ALL_MEDIA_EXTENSIONS = [
@@ -171,6 +153,20 @@ uploaded_file = st.file_uploader(
     type=ALL_MEDIA_EXTENSIONS,
     accept_multiple_files=False
 )
+
+# Language Selector (Mandatory Parameter for ApyHub STT)
+# Note: Burmese is 'my-MM'
+language_selection = st.selectbox(
+    "Select Speech Language (Mandatory)",
+    options=[
+        "English (en-US)", "Burmese (my-MM)", "Spanish (es-ES)", "French (fr-FR)"
+    ],
+    index=0,
+    help="Select the BCP-47 tag corresponding to the speech in the audio/video file."
+)
+
+# Extract the language code from the selection
+selected_language_code = language_selection.split("(")[-1].replace(")", "")
 
 if uploaded_file is not None:
     # Determine MIME type 
@@ -191,18 +187,18 @@ if uploaded_file is not None:
     
     if st.button("Generate Transcript and Summary"):
         
-        # Check size limit (Note: Base64 size limit is different from file size limit)
-        # Using a conservative file size limit for Base64 embedding
-        if uploaded_file.size > (15 * 1024 * 1024): 
-            st.error("File size limit exceeded for Base64 API call. Please upload a file smaller than 15MB.")
+        # The ApyHub endpoint handles large files (up to 200MB is common) via multipart, 
+        # so the 15MB limit is removed. We keep a placeholder check for very large files if needed.
+        if uploaded_file.size > (200 * 1024 * 1024): 
+            st.error("File size limit exceeded. Please upload a file smaller than 200MB.")
         else:
             # Main processing function call
             with st.spinner(f"Processing with ApyHub..."):
-                analysis_result, _ = analyze_media_with_apyhub(uploaded_file, mime_type)
+                analysis_result, _ = analyze_media_with_apyhub(uploaded_file, mime_type, selected_language_code)
             
             # Display the result
             if analysis_result and not analysis_result.startswith("Analysis failed"):
                 st.markdown(analysis_result)
-                st.success(f"Process complete: Transcription extracted by **{MODEL_NAME}**.")
+                st.success(f"Process complete: Transcription extracted by ApyHub.")
             else:
                 st.error("The analysis failed. Please check the error messages above for details.")
