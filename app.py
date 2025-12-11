@@ -3,58 +3,42 @@ import os
 import time
 from typing import Tuple, Optional
 import requests
-from urllib.parse import urljoin # Utility for constructing API URLs
+from urllib.parse import urljoin 
 
-# --- Configuration and Client Initialization ---
-# ❗ IMPORTANT: Ensure APYHUB_API_KEY is set in Streamlit secrets
+# --- Configuration and Client Initialization (assuming secrets are set) ---
 try:
-    # Attempt to retrieve API Key from Streamlit secrets
     API_KEY = st.secrets["APYHUB_API_KEY"] 
 except KeyError:
     st.error("🚨 API Key Error: Please set 'APYHUB_API_KEY' in your Streamlit secrets file or Streamlit Cloud Secrets.")
     st.stop()
 
-# --- ApyHub API Configuration ---
 APYHUB_BASE_URL = "https://api.apyhub.com/"
-
-# ✅ FIX APPLIED: Corrected endpoint based on ApyHub documentation for STT file upload
 STT_ENDPOINT = urljoin(APYHUB_BASE_URL, "stt/file") 
-
-# This is a mandatory parameter for the ApyHub STT API.
-# You must specify the language code of the speech (e.g., 'en-US', 'my-MM').
-DEFAULT_LANGUAGE_CODE = "en-US" 
 MODEL_NAME = "ApyHub STT (multipart/form-data)" 
 
 # --- Utility Function: Core Logic ---
 
 def analyze_media_with_apyhub(uploaded_file, mime_type: str, language_code: str) -> Tuple[Optional[str], str]:
-    """
-    1. Reads the file content and prepares it for a multipart/form-data request.
-    2. Sends the file and language code to the ApyHub /stt/file API.
-    3. Structures the final output based on the transcript result.
-    
-    Returns: (analysis_result_text, detected_language_code)
-    """
     
     st.info(f"Step 1/2: Preparing file **{uploaded_file.name}** for ApyHub...")
     
     # 1. Prepare data for multipart/form-data
     uploaded_file.seek(0)
+    file_content = uploaded_file.read() # Read the content once
     
-    # This structure tells 'requests' to create the multipart/form-data body.
-    # The 'file' field holds the audio file data.
+    # ✅ FIX APPLIED: Changed parameter name from 'file' to 'stt_file' 
     files = {
-        'file': (uploaded_file.name, uploaded_file.read(), mime_type)
+        'stt_file': (uploaded_file.name, file_content, mime_type) 
     }
     
-    # The 'language' field is a simple form field, not a file.
+    # The 'language' field is a simple form field.
     data = {
         'language': language_code
     }
     
     # The Authorization token is passed via a header.
     headers = {
-        "apy-token": API_KEY, # ApyHub uses 'apy-token' for the header
+        "apy-token": API_KEY, 
     }
 
     transcript_text = None
@@ -64,18 +48,16 @@ def analyze_media_with_apyhub(uploaded_file, mime_type: str, language_code: str)
         st.info(f"Step 2/2: Calling ApyHub STT API at **{STT_ENDPOINT}** with language code: `{language_code}`...")
         start_time = time.time()
         
-        # ✅ FIX APPLIED: Use 'files' parameter for multipart/form-data and 'data' for form fields
         response = requests.post(
             STT_ENDPOINT, 
             headers=headers, 
             data=data,
             files=files,
-            timeout=300 # 5 minutes timeout for long transcriptions
+            timeout=300 
         )
         
-        response.raise_for_status() # Raises an HTTPError for bad responses (4xx or 5xx)
+        response.raise_for_status() 
         
-        # ApyHub successful response returns JSON: {"data": "This is the sample data from speech-to-text"}
         transcript_data = response.json()
         transcript_text = transcript_data.get("data")
 
@@ -86,7 +68,7 @@ def analyze_media_with_apyhub(uploaded_file, mime_type: str, language_code: str)
         end_time = time.time()
         st.success(f"Transcription completed in {end_time - start_time:.2f} seconds.")
 
-        # --- Summarization Logic (Not part of the ApyHub STT API, so we keep the placeholder) ---
+        # --- Summarization Logic Placeholder ---
         final_result = (
             f"## 📝 Full Transcript (via ApyHub)\n"
             f"{transcript_text}\n\n"
@@ -109,14 +91,13 @@ def analyze_media_with_apyhub(uploaded_file, mime_type: str, language_code: str)
         return "Analysis failed due to an unexpected error.", ""
 
 
-# --- Streamlit UI ---
+# --- Streamlit UI (Rest of the code remains the same as it was already correct) ---
 st.set_page_config(page_title="Video/Audio Summarizer (ApyHub)", layout="centered")
 
 st.markdown("""
 <style>
-    /* Custom Styling for aesthetics */
     .stButton>button {
-        background-color: #38B000; /* ApyHub-like color */
+        background-color: #38B000; 
         color: white;
         font-size: 16px;
         padding: 10px 24px;
@@ -128,7 +109,7 @@ st.markdown("""
         background-color: #2D8B00;
     }
     .main-header {
-        color: #38B000; /* ApyHub-like color */
+        color: #38B000; 
         font-weight: bold;
         text-align: center;
         padding-bottom: 10px;
@@ -155,7 +136,6 @@ uploaded_file = st.file_uploader(
 )
 
 # Language Selector (Mandatory Parameter for ApyHub STT)
-# Note: Burmese is 'my-MM'
 language_selection = st.selectbox(
     "Select Speech Language (Mandatory)",
     options=[
@@ -165,14 +145,13 @@ language_selection = st.selectbox(
     help="Select the BCP-47 tag corresponding to the speech in the audio/video file."
 )
 
-# Extract the language code from the selection
 selected_language_code = language_selection.split("(")[-1].replace(")", "")
 
 if uploaded_file is not None:
     # Determine MIME type 
     mime_type = uploaded_file.type 
     
-    # Fallback logic for MIME type (kept from original code)
+    # Fallback logic for MIME type (kept for robustness)
     if not mime_type or 'octet-stream' in mime_type:
         ext = os.path.splitext(uploaded_file.name)[1].lower().replace('.', '')
         if ext == 'mp3': mime_type = 'audio/mpeg'
@@ -181,14 +160,12 @@ if uploaded_file is not None:
         elif ext == 'mov': mime_type = 'video/quicktime'
         elif ext == 'm4a': mime_type = 'audio/m4a'
         elif ext == 'ogg': mime_type = 'audio/ogg'
-        else: mime_type = 'application/octet-stream' # Default fallback
+        else: mime_type = 'application/octet-stream' 
         
     st.success(f"File uploaded: **{uploaded_file.name}** (Detected MIME: `{mime_type}`) - Ready to process.")
     
     if st.button("Generate Transcript and Summary"):
         
-        # The ApyHub endpoint handles large files (up to 200MB is common) via multipart, 
-        # so the 15MB limit is removed. We keep a placeholder check for very large files if needed.
         if uploaded_file.size > (200 * 1024 * 1024): 
             st.error("File size limit exceeded. Please upload a file smaller than 200MB.")
         else:
